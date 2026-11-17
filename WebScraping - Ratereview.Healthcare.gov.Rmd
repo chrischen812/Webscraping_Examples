@@ -1,0 +1,519 @@
+---
+title: "WebScrapingExercise - Ratereview.Healthcare.gov"
+author: "Christopher Chen"
+date: '2022-09-29'
+output: html_document
+---
+
+
+```{r }
+library(rvest)
+library(RSelenium)
+library(tidyverse)
+library(netstat)
+library(data.table)
+library(useful)
+library(openxlsx)
+```
+
+
+```{r }
+rs_driver_object <- rsDriver(browser = "chrome",
+         chromever = "106.0.5249.61",
+         verbose = FALSE,
+         port = free_port())
+
+remDr <- rs_driver_object$client
+
+remDr$navigate("https://ratereview.healthcare.gov/#search?")
+General_Path <- "C:/Users/chris/Desktop/Folder_HealthcareGov/"
+
+```
+
+
+```{r }
+search_ACA_button <- function() {
+  remDr$findElement(using = 'id', 'urr-search' )$clickElement()
+}
+
+search_Transit_button <- function() {
+  remDr$findElement(using = 'id', 'rrj-search' )$clickElement()
+}
+
+search_ACA_button()
+```
+
+##State Dropdown Box
+```{r }
+state_dropdown <- remDr$findElement(using = 'id', 'urr-state-dropdown' )
+
+State_List <- trimws(as.list(strsplit(trimws(state_dropdown$getElementText()), split = '\n')[[1]])[-1])
+
+
+
+state_dropdown_input <- function(statename) {
+  remDr$findElement(using = 'id', 'urr-state-dropdown' )$sendKeysToElement(list(statename))
+}
+
+
+#state_dropdown_input("Colorado")
+```
+
+##Market Label - Individual/Small Group
+```{r }
+SG_button_click <- function() {
+  remDr$findElement(using = 'xpath', '//label [@for="rbSmallGroup"]' )$clickElement()
+}
+
+Indiv_button_click <- function() {
+  remDr$findElement(using = 'xpath', '//label[@for="rbIndividual"]' )$clickElement()
+}
+
+#SG_button_click()
+```
+
+##Company Name Input Box
+```{r }
+company_namebox_input <- function(companyname){
+ company_name_box <- remDr$findElement(using = 'id', 'company-name-urr' )
+company_name_box$clearElement()
+company_name_box$sendKeysToElement(list(companyname))
+}
+
+#company_namebox_input("UHC")
+
+```
+
+##Year Dropdown Box
+```{r }
+year_dropdown <- remDr$findElement(using = 'id', 'urr-year-dropdown' )
+Year_List <- as.list(strsplit(trimws(year_dropdown$getElementText()), split = '\n')[[1]])
+
+year_dropdown_input <- function(yearnbr) {
+  remDr$findElement(using = 'id', 'urr-year-dropdown' )$sendKeysToElement(list(yearnbr))
+}
+
+
+#year_dropdown_input("2021")
+```
+
+##Submit Search
+```{r }
+subsearch_button_click <- function(){
+  remDr$findElement(using = 'id', 'btnSearchURR' )$clickElement()
+}
+
+#subsearch_button_click()
+```
+
+##Reset
+```{r }
+reset_button_click <- function(){
+remDr$findElement(using = 'id', 'uRRresetInfo' )$clickElement()
+}
+
+#reset_button_click()
+```
+
+##Change
+```{r }
+change_button_click <- function(){
+remDr$findElement(using = 'xpath', '//a[@data-navigateto="search"]' )$clickElement()
+}
+
+#change_button_click()
+```
+
+
+##Detect invalid parameter
+```{r }
+Invalid_search_status <- function(){
+
+Invalid_search <- remDr$findElement(using = 'id', 'maincontent' )
+
+cond_A <- Invalid_search$getElementText() == "We have detected an invalid parameter in your search request and are unable to proceed. Please return to the rate review gateway page, update your search, and try again."
+cond_B <- str_detect(Invalid_search$getElementText(), "invalid parameter")
+cond_C <- str_detect(Invalid_search$getElementText(), "unable")
+cond_D <- str_detect(Invalid_search$getElementText(), "update your search")
+
+cond_A | (cond_B & cond_C & cond_D)
+
+}
+
+#Invalid_search_status()
+```
+
+##Detect no information available
+```{r }
+
+No_info_search_status <- function(){
+
+Invalid_search <- remDr$findElement(using = 'xpath', '//div[@class="compare-no-items article"]' )
+
+cond_A <- Invalid_search$getElementText() == "Based on your entries, no information is available. You may have better results if you make changes to your State and/or Company information and search again."
+cond_B <- str_detect(Invalid_search$getElementText(), "no information")
+cond_C <- str_detect(Invalid_search$getElementText(), "available")
+cond_D <- str_detect(Invalid_search$getElementText(), "search again")
+
+cond_A | (cond_B & cond_C & cond_D)
+
+}
+
+#No_info_search_status()
+```
+
+##Data Table Scraping
+```{r }
+all_data <- list()
+cond <- TRUE
+```
+
+##Loop Thru Pages for data consolidation
+```{r }
+append_pages <- function(data_table, val_year, val_state){
+    while (cond == TRUE) {
+    #Scrap Data Table 
+    data_table_html <- data_table$getPageSource()
+    page <- read_html(data_table_html %>% unlist())
+    df <- html_table(page) %>% .[[1]] %>%
+      mutate(Year_Input = val_year,
+             State_Input = val_state)
+    all_data <<- rbindlist(list(all_data, df))
+    
+    #Ensure HTML scrap completes
+    Sys.sleep(0.2)
+    
+    #Current page #
+    lst_active_button <- remDr$findElement(using = 'xpath', '//a[@class="paginate_active"]' ) 
+    lst_page_nbr <-  as.list(strsplit(trimws(lst_active_button$getElementText()), split = '\n')[[1]])
+    
+    #Next button command and page #
+    Next_button <- remDr$findElement(using = 'xpath', '//i[@class="fa fa-angle-right"]' )
+    Next_button$clickElement()
+    active_button <- remDr$findElement(using = 'xpath', '//a[@class="paginate_active"]' )
+    page_nbr <- as.list(strsplit(trimws(active_button$getElementText()), split = '\n')[[1]])
+    
+    #check if end of pages
+    if (compare.list(lst_page_nbr[length(lst_page_nbr)] , page_nbr[length(page_nbr)]) == FALSE) {
+        cond <<- TRUE 
+        }
+      else {
+          break
+        }
+      }
+}
+```
+
+##showing numbers of product(s) 
+```{r }
+Product_showing <- function(){
+Product_string <-remDr$findElement(using = 'xpath', '//h2[@class="product-heading"]')$getElementText()
+return(as.numeric(gsub("\\D", "", Product_string)))
+}
+#Product_showing()
+```
+
+##showing numbers of carrier(s) 
+```{r }
+Carrier_showing <- function(){
+Carrier_string <-remDr$findElement(using = 'id', 'datatable_info')$getElementText()
+
+return(as.numeric(substr(Carrier_string, unlist(gregexpr("of ", Carrier_string))[1]+3, unlist(gregexpr("entries", Carrier_string))[1]-1)))
+
+}
+#Carrier_showing()
+
+```
+
+##Next Page button
+```{r }
+Next_button <- function(){
+remDr$findElement(using = 'xpath', '//i[@class="fa fa-angle-right"]' )$clickElement()
+}
+#Next_button()
+```
+
+##Navigation - Back to Product List
+```{r }
+Back_to_Product_List <- function() {
+remDr$findElement(using = 'xpath', "//a[@data-navigateto='urrsecondaryresults']")$clickElement()
+}
+
+#Back_to_Product_List()
+```
+
+##Navigation - Back to Search Results
+```{r }
+Back_to_Search_Results <- function() {
+remDr$findElement(using = 'xpath', "//a[@data-navigateto='urrresults']")$clickElement()
+}
+
+#Back_to_Search_Results()
+```
+
+##Carrier Product
+```{r }
+carrier_product_link <- function(x) {
+carrier_product_index <- remDr$findElements(using = 'xpath', '//td[@class="hidemobilecolumn hidemobilelastcolumn"]/a')  %>% unlist() %>% .[[x]] 
+carrier_product_index$clickElement()
+}
+#carrier_product_link(1)
+```
+
+##Carrier name 
+```{r }
+carrier_name <- function(x) {
+carrier_str <- remDr$findElements(using = 'xpath', '//td[@class=" sorting_1"]') %>% unlist() %>% .[[x]]
+gsub(" ","_",carrier_str$getElementText())
+}
+#carrier_name(1)
+```
+
+##Carrier Effective dt 
+```{r }
+carrier_eff_dt <- function(x) {
+carrier_eff_str <- remDr$findElement(using = 'xpath', '//div[@class="col-md-3"]')$getElementText()
+return(gsub("/","_",substr(carrier_eff_str, unlist(gregexpr("\n",carrier_eff_str))[1]+1,50)))
+}
+#carrier_eff_dt()
+```
+
+##function to access product page by index
+```{r }
+Product_index <- function() {
+Products <- remDr$findElements(using = 'xpath', '//div[@class="product-link col-md-12 fixed-bottom"]' ) 
+return(length(Products))
+}
+
+Product_detail <- function(x) {
+Product_detail <- remDr$findElements(using = 'xpath', '//div[@class="product-link col-md-12 fixed-bottom"]' )  %>% unlist() %>% .[[x]] 
+
+Prodstr <- Product_detail$getElementText()
+return(gsub(" ","_",substr(Prodstr, unlist(gregexpr("\nfor",Prodstr))[1]+5,500)))
+}
+
+Product_click_index <- function(x) {
+Product_nbr <- remDr$findElements(using = 'xpath', '//div[@class="product-link col-md-12 fixed-bottom"]/a' )  %>% unlist() %>% .[[x]] 
+Product_nbr$clickElement()
+}
+
+#Product_index()
+#Product_detail(7)
+#Product_click_index(1)
+```
+
+##Download Redacted Memo
+```{r }
+Download_Memo <- function(val_state, val_year, Carrier_Name, val_product, Product_Name, Carrier_Eff_Dt){
+information <- remDr$findElement(using = 'xpath', "//div[@class='redactedMemoLink']/a" ) 
+File_Location <- information$getElementAttribute('href') %>% unlist()
+File_Extension <- substring(File_Location, regexpr("\\.[^\\.]*$", File_Location)[1], 1000)
+Sys.sleep(0.1)
+Path <- paste0(General_Path,toString(val_state),"/", toString(val_year),"/",Carrier_Name,"_Eff_",toString(Carrier_Eff_Dt),"_Prod#",val_product,"_",gsub("/","_",Product_Name),File_Extension)
+Sys.sleep(0.2)
+
+download.file(url = File_Location, destfile = Path, mode="wb")
+Sys.sleep(0.2)
+}
+
+#Download_Memo("California","2022")
+```
+
+##Create folders
+```{r, eval = FALSE}
+for (val_state in State_List)
+  {
+        mainDir <- General_Path
+        subDir <- val_state
+        if (file.exists(subDir)){
+            setwd(file.path(mainDir, subDir))
+        } else {
+            dir.create(file.path(mainDir, subDir))
+            setwd(file.path(mainDir, subDir))
+        }
+}
+
+for (val_state in State_List)
+  {
+  for (val_year in Year_List)
+    {
+          mainDir <- paste0(General_Path,val_state,"/")
+          subDir <- val_year
+          if (file.exists(subDir)){
+              setwd(file.path(mainDir, subDir))
+          } else {
+              dir.create(file.path(mainDir, subDir))
+              setwd(file.path(mainDir, subDir))
+          }
+  }
+}
+```
+
+##OUTPUT - Main table consolidation
+```{r }
+all_data <- list()
+
+for (val_state in State_List)
+  {
+    for (val_year in Year_List)
+      {
+       change_button_click() 
+       Sys.sleep(0.2)
+       search_ACA_button()
+       Sys.sleep(0.2)
+       year_dropdown_input(val_year)
+       Sys.sleep(0.2) 
+       state_dropdown_input(val_state)
+       Sys.sleep(0.5)
+       SG_button_click()
+       Sys.sleep(0.5)
+       subsearch_button_click()
+       Sys.sleep(0.5)
+  
+       if (No_info_search_status() == FALSE & Invalid_search_status() == FALSE)  {
+           Sys.sleep(1)
+           data_table <- remDr$findElement(using='id','datatable_wrapper')
+           Sys.sleep(1)
+           cond <<- TRUE
+           append_pages(data_table, val_year, val_state)
+           Sys.sleep(0.5)
+       }
+       Sys.sleep(0.5)
+    }
+}
+```
+
+```{r }
+data_Output <- all_data %>%
+  mutate(CompanyName = trimws(substring(`Company Name`, 1, unlist(gregexpr("Effective",`Company Name`))/2-1)), Product =`508`) %>%
+  select(Year_Input, State_Input, CompanyName, `Effective Date`,`Requested Rate Change`, `Final Rate Change`,`Current Range of Rate Change`,Status, Product)
+
+Path <- paste0(General_Path, "/HealthCare_Gov_Export_", toString(format(Sys.Date(), "%Y%m%d")),".xlsx")
+
+#write.xlsx(data_Output, Path, colNames = TRUE)
+
+```
+
+##OUTPUT - Download Memos
+```{r }
+subsearch_button_click()
+State_List_2 <- State_List
+Year_List_2 <- Year_List
+
+for (val_state in State_List_2)
+  {
+  for (val_year in Year_List_2)
+    {
+       change_button_click() 
+       Sys.sleep(1)
+       search_ACA_button()
+       Sys.sleep(1)     
+       year_dropdown_input(val_year)
+       Sys.sleep(1) 
+       state_dropdown_input(val_state)
+       Sys.sleep(1)
+       SG_button_click()
+       Sys.sleep(1)
+       subsearch_button_click()
+       Sys.sleep(1)
+  
+       if (No_info_search_status() == FALSE & Invalid_search_status() == FALSE)  {
+          Sys.sleep(1)
+          Carrier_List <- Carrier_showing()
+          Sys.sleep(1)
+          val_carrier <<- 1
+          Sys.sleep(1)
+          while (val_carrier <= Carrier_List)
+            {
+            Sys.sleep(1)
+            n <- ifelse(val_carrier %% 10 == 0, 10, val_carrier %% 10)
+            Sys.sleep(1)
+            Carrier_Name <- carrier_name(n)
+            Sys.sleep(1)
+            carrier_product_link(n)
+            Sys.sleep(1)
+            Product_List <- Product_showing()
+            Sys.sleep(1)
+            Carrier_Eff_Dt <- carrier_eff_dt()
+            Sys.sleep(1)
+            val_product <<- 1
+            Sys.sleep(1)
+            while (val_product <= Product_List)
+              {
+              Sys.sleep(1)
+              Product_Name <- Product_detail(val_product)
+              Sys.sleep(1)
+              Product_click_index(val_product)
+              Sys.sleep(1)
+              Download_Memo(val_state, val_year, Carrier_Name, val_product, Product_Name, Carrier_Eff_Dt)
+              Sys.sleep(1)
+              Back_to_Product_List()
+              Sys.sleep(1)
+              val_product = val_product + 1
+              Sys.sleep(1)
+              }
+            Back_to_Search_Results()
+            Sys.sleep(1)
+            val_carrier = val_carrier + 1
+            Sys.sleep(1)
+            Next_button(val_carrier)
+            Sys.sleep(1)
+            }
+            Sys.sleep(1)
+       }
+       Sys.sleep(1)
+    }
+}
+```
+
+```{r }
+carrier_detail_v <- function(x) {
+str_1 <- lapply(remDr$findElements(using = 'xpath', '//div[@class="info-section col-md-12"]'), function (x) x$getElementText()) %>% unlist()
+strsplit(trimws(str_1), split = '\n') %>% .[[1]] %>% .[x]
+}
+carrier_detail_v(1)
+carrier_detail_v(2)
+carrier_detail_v(3)
+carrier_detail_v(4)
+carrier_detail_v(5)
+carrier_detail_v(6)
+carrier_detail_v(7)
+carrier_detail_v(8)
+
+
+transform_vec <- function(vec, n) {
+c <- 1
+my_matrix <- data.frame(c(NULL,NULL,NULL,NULL), row.names = c("1","2") )
+  while (c <= n) {
+  my_matrix <- cbind(my_matrix,vec[c])
+  c = c + 1
+  }
+return(my_matrix)
+}
+
+Product_detail_v <- function(x) {
+Product_detail <- remDr$findElements(using = 'xpath', '//div[@class="rate-change col-md-12"]' ) 
+df <- lapply(Product_detail, function (x) x$getElementText()) %>% unlist() 
+df <- strsplit(trimws(df), split = '\n') %>% unlist() %>% .[[x]]
+return(df)
+}
+
+matrix <- transform_vec(df, 5)
+
+Product_detail_v(1)
+Product_detail_v(2)
+Product_detail_v(3)
+Product_detail_v(4)
+Product_detail_v(18)
+
+Product_showing()
+```
+
+```{r }
+
+```
+
+```{r }
+
+```
+
